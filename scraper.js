@@ -9,50 +9,64 @@ const supabase = createClient(
 );
 
 async function scrapeRSS() {
-  console.log('Fetching Providence City Council RSS feed...');
+  console.log('Fetching Providence City Council news...');
 
-  const response = await fetch('https://council.providenceri.gov/feed/', {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-    }
-  });
+  const pages = [
+    'https://council.providenceri.gov/feed/',
+    'https://council.providenceri.gov/feed/?paged=2',
+    'https://council.providenceri.gov/feed/?paged=3',
+    'https://council.providenceri.gov/feed/?paged=4',
+  ];
 
-  const xml = await response.text();
-  const posts = [];
+  let allItems = [];
 
-  // Find each item in the RSS feed
-  const items = xml.match(/<item>(.*?)<\/item>/gs) || [];
-  console.log('Found', items.length, 'items in RSS feed');
+  for (const url of pages) {
+    console.log('Fetching:', url);
 
-  for (const item of items.slice(0, 10)) {
-    // Get title
-    const titleMatch = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/s) ||
-                       item.match(/<title>(.*?)<\/title>/s);
-    const title = titleMatch ? titleMatch[1].trim() : '';
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+      }
+    });
 
-    // Get link
-    const linkMatch = item.match(/<link>(.*?)<\/link>/s);
-    const link = linkMatch ? linkMatch[1].trim() : '';
+    const xml = await response.text();
 
-    // Get publish date
-    const dateMatch = item.match(/<pubDate>(.*?)<\/pubDate>/s);
-    const publishedAt = dateMatch ? new Date(dateMatch[1].trim()).toISOString() : null;
+    // Find each item in this page
+    const items = xml.match(/<item>(.*?)<\/item>/gs) || [];
+    console.log('Found', items.length, 'items on this page');
 
-    // Get content/description
-    const contentMatch = item.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/s) ||
-                         item.match(/<description>(.*?)<\/description>/s);
-    const rawText = contentMatch
-      ? contentMatch[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1000)
-      : title;
+    for (const item of items) {
+      // Get title
+      const titleMatch = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/s) ||
+                         item.match(/<title>(.*?)<\/title>/s);
+      const title = titleMatch ? titleMatch[1].trim() : '';
 
-    if (title && title.length > 5) {
-      posts.push({ title, source_url: link, raw_text: rawText, published_at: publishedAt });
-      console.log('Found:', title);
-      console.log('Date:', publishedAt);
+      // Get link
+      const linkMatch = item.match(/<link>(.*?)<\/link>/s);
+      const link = linkMatch ? linkMatch[1].trim() : '';
+
+      // Get publish date
+      const dateMatch = item.match(/<pubDate>(.*?)<\/pubDate>/s);
+      const publishedAt = dateMatch ? new Date(dateMatch[1].trim()).toISOString() : null;
+
+      // Get content
+      const contentMatch = item.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/s) ||
+                           item.match(/<description>(.*?)<\/description>/s);
+      const rawText = contentMatch
+        ? contentMatch[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1000)
+        : title;
+
+      // Only include 2026 articles
+      if (title && title.length > 5 && publishedAt && publishedAt.startsWith('2026')) {
+        allItems.push({ title, source_url: link, raw_text: rawText, published_at: publishedAt });
+        console.log('Found:', title);
+        console.log('Date:', publishedAt);
+      }
     }
   }
 
-  return posts;
+  console.log('Total 2026 articles found:', allItems.length);
+  return allItems;
 }
 
 async function saveToDatabase(posts) {
@@ -63,17 +77,27 @@ async function saveToDatabase(posts) {
     .neq('id', '00000000-0000-0000-0000-000000000000');
 
   for (const post of posts) {
-    const { error } = await supabase
+    const { data: existing } = await supabase
       .from('posts')
-      .insert([{
-        title: post.title,
-        source_url: post.source_url,
-        raw_text: post.raw_text,
-        published_at: post.published_at
-      }]);
+      .select('id')
+      .eq('title', post.title)
+      .single();
 
-    if (error) console.log('Error saving:', error.message);
-    else console.log('Saved:', post.title);
+    if (!existing) {
+      const { error } = await supabase
+        .from('posts')
+        .insert([{
+          title: post.title,
+          source_url: post.source_url,
+          raw_text: post.raw_text,
+          published_at: post.published_at
+        }]);
+
+      if (error) console.log('Error saving:', error.message);
+      else console.log('Saved:', post.title);
+    } else {
+      console.log('Already exists:', post.title);
+    }
   }
 }
 
