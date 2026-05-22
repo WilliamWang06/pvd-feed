@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PVD Feed - Providence City News</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, sans-serif; background: #f5f5f5; color: #333; }
+    .header { background: white; border-bottom: 1px solid #eee; padding: 16px 20px; }
+    .header h1 { font-size: 22px; color: #1D9E75; }
+    .header p { font-size: 14px; color: #888; margin-top: 2px; }
+    .filters { display: flex; gap: 8px; padding: 16px 20px; overflow-x: auto; background: white; border-bottom: 1px solid #eee; }
+    .filters::-webkit-scrollbar { display: none; }
+    .chip { border: 1px solid #ddd; border-radius: 20px; padding: 6px 14px; font-size: 13px; cursor: pointer; white-space: nowrap; background: white; }
+    .chip.active { background: #1D9E75; border-color: #1D9E75; color: white; }
+    .feed { max-width: 600px; margin: 0 auto; padding: 16px; }
+    .card { background: white; border: 1px solid #eee; border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+    .cat { font-size: 11px; color: #1D9E75; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; font-weight: 600; }
+    .title { font-size: 15px; font-weight: 600; margin-bottom: 6px; color: #1a1a1a; }
+    .summary { font-size: 14px; line-height: 1.55; color: #555; }
+    .footer { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
+    .time { font-size: 12px; color: #aaa; }
+    .source { font-size: 12px; color: #1D9E75; text-decoration: none; }
+    .source:hover { text-decoration: underline; }
+    #loading { text-align: center; padding: 40px; color: #888; }
+    .empty { text-align: center; padding: 40px; color: #888; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>PVD Feed</h1>
+    <p>Providence city news, summarized for residents</p>
+  </div>
+  <div class="filters">
+    <div class="chip active" onclick="filterBy('all', this)">All</div>
+    <div class="chip" onclick="filterBy('Roads', this)">Roads</div>
+    <div class="chip" onclick="filterBy('Budget', this)">Budget</div>
+    <div class="chip" onclick="filterBy('Schools', this)">Schools</div>
+    <div class="chip" onclick="filterBy('Events', this)">Events</div>
+    <div class="chip" onclick="filterBy('Safety', this)">Safety</div>
+    <div class="chip" onclick="filterBy('Housing', this)">Housing</div>
+    <div class="chip" onclick="filterBy('Other', this)">Other</div>
+  </div>
+  <div class="feed">
+    <div id="loading">Loading posts...</div>
+    <div id="posts"></div>
+  </div>
+
+  <script>
+    const SUPABASE_URL = 'https://hhwjrqtvlalkqeprlcet.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_9MaYolyPrE-2QhKsF_PDbw_s82WBF-p';
+
+    let allPosts = [];
+    let currentFilter = 'all';
+
+    async function loadPosts() {
+      try {
+        const res = await fetch(
+          `${SUPABASE_URL}/rest/v1/posts?select=*&order=created_at.desc&limit=50`,
+          {
+            headers: {
+              'apikey': SUPABASE_KEY,
+              'Authorization': `Bearer ${SUPABASE_KEY}`
+            }
+          }
+        );
+        allPosts = await res.json();
+        document.getElementById('loading').style.display = 'none';
+        renderPosts();
+      } catch (err) {
+        document.getElementById('loading').textContent = 'Error loading posts. Please refresh.';
+      }
+    }
+
+    function renderPosts() {
+      const filtered = currentFilter === 'all'
+        ? allPosts
+        : allPosts.filter(p => p.category === currentFilter);
+
+      if (filtered.length === 0) {
+        document.getElementById('posts').innerHTML = '<div class="empty">No posts in this category yet.</div>';
+        return;
+      }
+
+      document.getElementById('posts').innerHTML = filtered.map(post => `
+        <div class="card">
+          <div class="cat">${post.category || 'General'}</div>
+          <div class="title">${post.title}</div>
+          <div class="summary">${post.summary || 'Summary coming soon...'}</div>
+          <div class="footer">
+           <span class="time">${post.published_at ? new Date(post.published_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Providence City Council'}</span>
+            ${post.source_url ? `<a class="source" href="${post.source_url}" target="_blank">Read full article →</a>` : ''}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function filterBy(cat, el) {
+      currentFilter = cat;
+      document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+      el.classList.add('active');
+      renderPosts();
+    }
+
+    loadPosts();
+  </script>
+</body>
+</html>
