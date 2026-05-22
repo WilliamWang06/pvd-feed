@@ -2,7 +2,7 @@ name: Daily scraper and summarizer
 
 on:
   schedule:
-    - cron: '0 11 * * *'
+    - cron: '0 11 1 * *'
   workflow_dispatch:
 
 jobs:
