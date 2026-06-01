@@ -1,7 +1,7 @@
 {
   "name": "PVD Feed",
   "short_name": "PVD Feed",
-  "description": "Providence city news, summarized for residents",
+ "description": "City of Providence news, summarized for residents",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
