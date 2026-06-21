@@ -1,10 +1,11 @@
 // summarizer.js
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 const Anthropic = require('@anthropic-ai/sdk');
-const { createClient } = require('@supabase/supabase-js');
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const POSTS_FILE = path.join(__dirname, 'public', 'posts.json');
 
 async function summarizePost(title) {
   const message = await anthropic.messages.create({
@@ -30,31 +31,33 @@ Meeting: ${title}`
 }
 
 async function processPosts() {
-  const { data: posts, error } = await supabase
-    .from('posts')
-    .select('*')
-    .is('summary', null)
-    .limit(22);
+  if (!fs.existsSync(POSTS_FILE)) {
+    console.log('No posts.json found yet - run scraper.js first.');
+    return;
+  }
 
-  if (error) { console.log('Error:', error.message); return; }
-  if (!posts || posts.length === 0) { console.log('No new posts to summarize.'); return; }
+  const posts = JSON.parse(fs.readFileSync(POSTS_FILE, 'utf-8'));
+  const unsummarized = posts.filter(p => !p.summary);
 
-  console.log('Summarizing', posts.length, 'posts...');
+  if (unsummarized.length === 0) {
+    console.log('No new posts to summarize.');
+    return;
+  }
 
-  for (const post of posts) {
+  const toProcess = unsummarized.slice(0, 22);
+  console.log('Summarizing', toProcess.length, 'posts...');
+
+  for (const post of toProcess) {
     console.log('Summarizing:', post.title);
     const { summary, category } = await summarizePost(post.title);
-
-    await supabase
-      .from('posts')
-      .update({ summary, category })
-      .eq('id', post.id);
-
+    post.summary = summary;
+    post.category = category;
     console.log('  Category:', category);
     console.log('  Summary:', summary);
   }
 
-  console.log('All done!');
+  fs.writeFileSync(POSTS_FILE, JSON.stringify(posts, null, 2));
+  console.log('All done! Saved to', POSTS_FILE);
 }
 
 processPosts();
