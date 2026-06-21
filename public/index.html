@@ -27,9 +27,14 @@
     .cat { font-size: 11px; color: #1D9E75; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; font-weight: 600; }
     .title { font-size: 15px; font-weight: 600; margin-bottom: 6px; color: #1a1a1a; }
     .summary { font-size: 14px; line-height: 1.55; color: #555; }
+    .full-text { font-size: 14px; line-height: 1.6; color: #444; margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee; }
+    .full-text p { margin-bottom: 10px; }
+    .full-text p:last-child { margin-bottom: 0; }
+    .orig-link { display: inline-block; margin-top: 10px; font-size: 12px; color: #999; text-decoration: none; }
+    .orig-link:hover { text-decoration: underline; }
     .footer { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
     .time { font-size: 12px; color: #aaa; }
-    .source { font-size: 12px; color: #1D9E75; text-decoration: none; }
+    .source { font-size: 12px; color: #1D9E75; text-decoration: none; cursor: pointer; background: none; border: none; padding: 0; font-family: inherit; }
     .source:hover { text-decoration: underline; }
     #loading { text-align: center; padding: 40px; color: #888; }
     .empty { text-align: center; padding: 40px; color: #888; }
@@ -62,7 +67,9 @@
         loading: 'Loading posts...',
         error: 'Error loading posts. Please refresh.',
         empty: 'No posts in this category yet.',
-        readMore: 'Read full article →',
+        readFull: 'Read full article ↓',
+        hideFull: 'Hide full article ↑',
+        viewOriginal: 'View original source (English) →',
         categories: { all: 'All', Roads: 'Roads', Budget: 'Budget', Schools: 'Schools', Events: 'Events', Safety: 'Safety', Housing: 'Housing', Other: 'Other' }
       },
       es: {
@@ -71,7 +78,9 @@
         loading: 'Cargando publicaciones...',
         error: 'Error al cargar. Por favor actualice la página.',
         empty: 'Todavía no hay publicaciones en esta categoría.',
-        readMore: 'Leer artículo completo →',
+        readFull: 'Leer artículo completo ↓',
+        hideFull: 'Ocultar artículo ↑',
+        viewOriginal: 'Ver fuente original (inglés) →',
         categories: { all: 'Todo', Roads: 'Calles', Budget: 'Presupuesto', Schools: 'Escuelas', Events: 'Eventos', Safety: 'Seguridad', Housing: 'Vivienda', Other: 'Otro' }
       },
       pt: {
@@ -80,7 +89,9 @@
         loading: 'Carregando publicações...',
         error: 'Erro ao carregar. Por favor, atualize a página.',
         empty: 'Ainda não há publicações nesta categoria.',
-        readMore: 'Ler artigo completo →',
+        readFull: 'Ler artigo completo ↓',
+        hideFull: 'Ocultar artigo ↑',
+        viewOriginal: 'Ver fonte original (inglês) →',
         categories: { all: 'Todos', Roads: 'Ruas', Budget: 'Orçamento', Schools: 'Escolas', Events: 'Eventos', Safety: 'Segurança', Housing: 'Habitação', Other: 'Outro' }
       },
       zh: {
@@ -89,7 +100,9 @@
         loading: '正在加载...',
         error: '加载失败，请刷新页面。',
         empty: '该分类暂无内容。',
-        readMore: '阅读全文 →',
+        readFull: '阅读全文 ↓',
+        hideFull: '收起全文 ↑',
+        viewOriginal: '查看英文原文 →',
         categories: { all: '全部', Roads: '道路', Budget: '预算', Schools: '学校', Events: '活动', Safety: '安全', Housing: '住房', Other: '其他' }
       }
     };
@@ -97,9 +110,17 @@
     let allPosts = [];
     let currentFilter = 'all';
     let currentLang = localStorage.getItem('pvdLang') || 'en';
+    const expanded = new Set();
 
     function t() {
       return STRINGS[currentLang] || STRINGS.en;
+    }
+
+    function escapeHtml(str) {
+      return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
     }
 
     function renderChrome() {
@@ -113,7 +134,7 @@
         <div class="chip ${cat === currentFilter ? 'active' : ''}" data-cat="${cat}">${s.categories[cat]}</div>
       `).join('');
       document.querySelectorAll('.chip').forEach(el => {
-        el.addEventListener('click', () => filterBy(el.dataset.cat, el));
+        el.addEventListener('click', () => filterBy(el.dataset.cat));
       });
 
       document.querySelectorAll('.lang-btn').forEach(btn => {
@@ -142,11 +163,31 @@
       }
     }
 
+    function titleFor(post) {
+      if (post.title_i18n && post.title_i18n[currentLang]) return post.title_i18n[currentLang];
+      return post.title || '';
+    }
+
     function summaryFor(post) {
       if (typeof post.summary === 'string') return post.summary; // old-format fallback
       if (post.summary && post.summary[currentLang]) return post.summary[currentLang];
       if (post.summary && post.summary.en) return post.summary.en;
       return '';
+    }
+
+    function fullTextFor(post) {
+      if (post.full_text_i18n && post.full_text_i18n[currentLang]) return post.full_text_i18n[currentLang];
+      if (post.full_text_i18n && post.full_text_i18n.en) return post.full_text_i18n.en;
+      return post.full_text || post.raw_text || '';
+    }
+
+    function renderFullText(text) {
+      return text
+        .split(/\n{2,}/)
+        .map(p => p.trim())
+        .filter(p => p.length > 0)
+        .map(p => `<p>${escapeHtml(p)}</p>`)
+        .join('');
     }
 
     function renderPosts() {
@@ -160,17 +201,33 @@
         return;
       }
 
-      document.getElementById('posts').innerHTML = filtered.map(post => `
+      document.getElementById('posts').innerHTML = filtered.map(post => {
+        const isOpen = expanded.has(post.id);
+        return `
         <div class="card">
           <div class="cat">${s.categories[post.category] || post.category || s.categories.Other}</div>
-          <div class="title">${post.title}</div>
-          <div class="summary">${summaryFor(post) || '...'}</div>
+          <div class="title">${escapeHtml(titleFor(post))}</div>
+          <div class="summary">${escapeHtml(summaryFor(post)) || '...'}</div>
+          ${isOpen ? `
+            <div class="full-text">
+              ${renderFullText(fullTextFor(post))}
+              <a class="orig-link" href="${post.source_url}" target="_blank">${s.viewOriginal}</a>
+            </div>
+          ` : ''}
           <div class="footer">
            <span class="time">${post.published_at ? new Date(post.published_at).toLocaleDateString(currentLang === 'en' ? 'en-US' : currentLang, { month: 'short', day: 'numeric', year: 'numeric' }) : ''}</span>
-            ${post.source_url ? `<a class="source" href="${post.source_url}" target="_blank">${s.readMore}</a>` : ''}
+            <button class="source toggle-full" data-id="${post.id}">${isOpen ? s.hideFull : s.readFull}</button>
           </div>
         </div>
-      `).join('');
+      `}).join('');
+
+      document.querySelectorAll('.toggle-full').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const id = btn.dataset.id;
+          if (expanded.has(id)) expanded.delete(id); else expanded.add(id);
+          renderPosts();
+        });
+      });
     }
 
     function filterBy(cat) {
