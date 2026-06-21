@@ -81,6 +81,25 @@ const JUNK_PATTERNS = [
   /skip to/i, /follow us/i, /newsletter/i, /^\(\d{3}\)\s*\d{3}-\d{4}$/
 ];
 
+// Some council pages embed a Spanish (or other language) translation directly in the page body,
+// right below the English text. Since we generate our own translations, we only want the
+// English paragraphs from the source - this filters out anything that looks non-English.
+const ENGLISH_STOPWORDS = new Set(['the','and','of','to','in','for','is','with','that','this','was','were','are','on','at','by','from','as','it','be','has','have','will','would','their','its']);
+const NON_ENGLISH_STOPWORDS = new Set(['el','la','los','las','de','que','en','una','un','para','con','del','su','sus','se','al','por','más','fue','han','está','und','der','die','das','le','les','des','dos','das','não','uma']);
+
+function isEnglishParagraph(text) {
+  const words = text.toLowerCase().match(/[a-zà-ÿ]+/g) || [];
+  if (words.length < 4) return true; // too short to judge, don't discard
+  let enScore = 0, otherScore = 0;
+  for (const w of words) {
+    if (ENGLISH_STOPWORDS.has(w)) enScore++;
+    if (NON_ENGLISH_STOPWORDS.has(w)) otherScore++;
+  }
+  const accents = (text.match(/[áéíóúñãõçâêô¿¡]/g) || []).length;
+  otherScore += accents * 0.5;
+  return enScore >= otherScore;
+}
+
 async function fetchFullText(url) {
   try {
     const res = await fetch(url, {
@@ -101,7 +120,8 @@ async function fetchFullText(url) {
       .map((i, el) => $(el).text().replace(/\s+/g, ' ').trim())
       .get()
       .filter(t => t.length > 30)
-      .filter(t => !JUNK_PATTERNS.some(re => re.test(t)));
+      .filter(t => !JUNK_PATTERNS.some(re => re.test(t)))
+      .filter(isEnglishParagraph);
 
     let text = paragraphs.join('\n\n').trim();
     if (text.length < 150) {
@@ -127,12 +147,20 @@ function loadExistingPosts() {
   }
 }
 
-// Fetches full article bodies for posts that don't have one yet, or only have the
-// short RSS-excerpt fallback (e.g. from before this fix existed)
+function looksContaminated(text) {
+  if (!text) return false;
+  const paras = text.split(/\n{2,}/).filter(p => p.trim().length > 30);
+  if (paras.length === 0) return false;
+  const nonEnglishCount = paras.filter(p => !isEnglishParagraph(p)).length;
+  return nonEnglishCount / paras.length > 0.15; // more than 15% non-English paragraphs = contaminated
+}
+
+// Fetches full article bodies for posts that don't have one yet, only have the short
+// RSS-excerpt fallback, or got contaminated with embedded non-English text from the source page
 async function backfillFullText(posts) {
-  const needFullText = posts.filter(p => !p.full_text || p.full_text === p.raw_text);
+  const needFullText = posts.filter(p => !p.full_text || p.full_text === p.raw_text || looksContaminated(p.full_text));
   const toFetch = needFullText.slice(0, MAX_ARTICLE_FETCHES_PER_RUN);
-  console.log(toFetch.length, 'articles need their full text (re)fetched (of', needFullText.length, 'missing/incomplete)');
+  console.log(toFetch.length, 'articles need their full text (re)fetched (of', needFullText.length, 'missing/incomplete/contaminated)');
 
   for (const post of toFetch) {
     console.log('Fetching full article:', post.title);
