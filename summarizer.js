@@ -7,27 +7,53 @@ const Anthropic = require('@anthropic-ai/sdk');
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const POSTS_FILE = path.join(__dirname, 'public', 'posts.json');
 
+const VALID_CATEGORIES = ['Roads', 'Budget', 'Schools', 'Events', 'Safety', 'Housing', 'Other'];
+
 async function summarizePost(title) {
   const message = await anthropic.messages.create({
     model: 'claude-sonnet-4-5',
-    max_tokens: 200,
+    max_tokens: 700,
     messages: [{
       role: 'user',
-      content: `You are a helpful assistant for Providence, RI residents.
-Summarize this city meeting in 2 plain-English sentences that a regular resident would understand.
-Then on a new line write CATEGORY: followed by ONE category from this list:
-Roads, Budget, Schools, Events, Safety, Housing, Other.
+      content: `You are a helpful assistant for Providence, RI residents, many of whom are more comfortable in Spanish, Portuguese, or Chinese than English.
 
-Meeting: ${title}`
+For this city council meeting/article, write a 2-sentence plain-language summary that a regular resident would understand, in FOUR languages: English, Spanish, Portuguese, and Chinese (Simplified).
+
+Also pick ONE category from this exact list: ${VALID_CATEGORIES.join(', ')}.
+
+Meeting: ${title}
+
+Respond with ONLY valid JSON, no markdown code fences, no preamble, in exactly this shape:
+{"category": "...", "summary": {"en": "...", "es": "...", "pt": "...", "zh": "..."}}`
     }]
   });
 
-  const fullResponse = message.content[0].text;
-  const parts = fullResponse.split('CATEGORY:');
-  const summary = parts[0].trim();
-  const category = parts[1] ? parts[1].trim() : 'Other';
+  const raw = message.content[0].text.trim().replace(/^```json\s*|```$/g, '');
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    console.log('  Could not parse JSON response, falling back to English-only. Raw:', raw.slice(0, 200));
+    return { category: 'Other', summary: { en: raw, es: '', pt: '', zh: '' } };
+  }
 
-  return { summary, category };
+  const category = VALID_CATEGORIES.includes(parsed.category) ? parsed.category : 'Other';
+  const summary = {
+    en: parsed.summary?.en || '',
+    es: parsed.summary?.es || '',
+    pt: parsed.summary?.pt || '',
+    zh: parsed.summary?.zh || ''
+  };
+
+  return { category, summary };
+}
+
+function needsProcessing(post) {
+  // Old-format posts have summary as a plain string. New format is an object with en/es/pt/zh.
+  if (!post.summary) return true;
+  if (typeof post.summary === 'string') return true;
+  if (typeof post.summary === 'object' && (!post.summary.es || !post.summary.pt || !post.summary.zh)) return true;
+  return false;
 }
 
 async function processPosts() {
@@ -37,23 +63,23 @@ async function processPosts() {
   }
 
   const posts = JSON.parse(fs.readFileSync(POSTS_FILE, 'utf-8'));
-  const unsummarized = posts.filter(p => !p.summary);
+  const toDo = posts.filter(needsProcessing);
 
-  if (unsummarized.length === 0) {
+  if (toDo.length === 0) {
     console.log('No new posts to summarize.');
     return;
   }
 
-  const toProcess = unsummarized.slice(0, 22);
-  console.log('Summarizing', toProcess.length, 'posts...');
+  // Cap how many we process per run so we never blow through rate limits
+  const toProcess = toDo.slice(0, 22);
+  console.log('Summarizing', toProcess.length, 'posts in 4 languages...');
 
   for (const post of toProcess) {
     console.log('Summarizing:', post.title);
-    const { summary, category } = await summarizePost(post.title);
-    post.summary = summary;
+    const { category, summary } = await summarizePost(post.title);
     post.category = category;
+    post.summary = summary;
     console.log('  Category:', category);
-    console.log('  Summary:', summary);
   }
 
   fs.writeFileSync(POSTS_FILE, JSON.stringify(posts, null, 2));
