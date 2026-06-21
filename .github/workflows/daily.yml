@@ -8,6 +8,13 @@ on:
 permissions:
   contents: write
 
+# Prevents two runs from editing posts.json at the same time, which causes unresolvable
+# merge conflicts. A run triggered while one is already in progress will wait its turn
+# instead of running in parallel.
+concurrency:
+  group: posts-pipeline
+  cancel-in-progress: false
+
 jobs:
   run-scrapers:
     runs-on: ubuntu-latest
