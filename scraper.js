@@ -69,7 +69,18 @@ async function scrapeRSS() {
   return allItems;
 }
 
-// Fetches the actual article page and extracts the main body text (not just the RSS excerpt)
+// Fetches the actual article page and extracts the main body text (not just the RSS excerpt).
+// Works across different WordPress themes by filtering out known chrome/boilerplate
+// instead of relying on guessing the right CSS class name.
+const JUNK_PATTERNS = [
+  /subscribe/i, /mailing list/i, /successfully subscribed/i,
+  /accessibility tools?/i, /reading mask/i, /reading bar/i, /grayscale/i,
+  /high contrast/i, /invert colors/i, /dyslexic friendly/i, /stop all videos/i,
+  /language\s*translation/i, /powered by google/i, /^©/, /all rights reserved/i,
+  /^tel:/i, /^share$/i, /^tweet$/i, /^print$/i, /^email$/i,
+  /skip to/i, /follow us/i, /newsletter/i, /^\(\d{3}\)\s*\d{3}-\d{4}$/
+];
+
 async function fetchFullText(url) {
   try {
     const res = await fetch(url, {
@@ -84,28 +95,19 @@ async function fetchFullText(url) {
     const html = await res.text();
     const $ = cheerio.load(html);
 
-    // Try common WordPress content containers, in order of likelihood
-    const selectors = ['.entry-content', '.post-content', 'article .content', 'main article', '.single-content', 'article'];
-    let container = null;
-    for (const sel of selectors) {
-      const el = $(sel).first();
-      if (el.length && el.text().trim().length > 200) {
-        container = el;
-        break;
-      }
-    }
-    if (!container) {
-      console.log('  Could not find article content container');
+    $('script, style, nav, header, footer, aside, form, iframe').remove();
+
+    const paragraphs = $('body p')
+      .map((i, el) => $(el).text().replace(/\s+/g, ' ').trim())
+      .get()
+      .filter(t => t.length > 30)
+      .filter(t => !JUNK_PATTERNS.some(re => re.test(t)));
+
+    let text = paragraphs.join('\n\n').trim();
+    if (text.length < 150) {
+      console.log('  Extracted text too short, likely failed to find real content');
       return null;
     }
-
-    container.find('script, style, .sharedaddy, .jp-relatedposts, nav, .comments').remove();
-
-    const paragraphs = container.find('p').map((i, el) => $(el).text().trim()).get().filter(t => t.length > 0);
-    let text = paragraphs.length > 0 ? paragraphs.join('\n\n') : container.text().trim();
-
-    text = text.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
-    if (text.length < 100) return null;
 
     return text.slice(0, MAX_FULL_TEXT_CHARS);
   } catch (err) {
@@ -125,16 +127,22 @@ function loadExistingPosts() {
   }
 }
 
-// Fetches full article bodies for any posts that don't have one yet (new or backfilled old posts)
+// Fetches full article bodies for posts that don't have one yet, or only have the
+// short RSS-excerpt fallback (e.g. from before this fix existed)
 async function backfillFullText(posts) {
-  const needFullText = posts.filter(p => !p.full_text);
+  const needFullText = posts.filter(p => !p.full_text || p.full_text === p.raw_text);
   const toFetch = needFullText.slice(0, MAX_ARTICLE_FETCHES_PER_RUN);
-  console.log(toFetch.length, 'articles need their full text fetched (of', needFullText.length, 'missing)');
+  console.log(toFetch.length, 'articles need their full text (re)fetched (of', needFullText.length, 'missing/incomplete)');
 
   for (const post of toFetch) {
     console.log('Fetching full article:', post.title);
     const text = await fetchFullText(post.source_url);
-    post.full_text = text || post.raw_text; // fall back to the short RSS excerpt if the page fetch fails
+    if (text && text !== post.full_text) {
+      post.full_text = text;
+      post.full_text_i18n = null; // the source text changed, so old translations are stale - redo them
+    } else if (!post.full_text) {
+      post.full_text = post.raw_text; // still nothing better than the excerpt
+    }
     await sleep(300); // be polite to the city's server
   }
 }
