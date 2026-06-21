@@ -9,7 +9,6 @@
 <link rel="manifest" href="/manifest.json">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
  <title>PVD Feed - City of Providence News</title>
- <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, sans-serif; background: #f5f5f5; color: #333; }
@@ -54,31 +53,22 @@
   </div>
 
   <script>
-    const SUPABASE_URL = 'https://hhwjrqtvlalkqeprlcet.supabase.co';
-    const SUPABASE_KEY = 'sb_publishable_9MaYolyPrE-2QhKsF_PDbw_s82WBF-p';
-
     let allPosts = [];
     let currentFilter = 'all';
 
-   async function loadPosts() {
-  try {
-    const { createClient } = supabase;
-    const client = createClient(SUPABASE_URL, SUPABASE_KEY);
-    const { data, error } = await client
-      .from('posts')
-      .select('*')
-      .order('published_at', { ascending: false })
-      .limit(50);
-    
-    if (error) throw error;
-    allPosts = data;
-    document.getElementById('loading').style.display = 'none';
-    renderPosts();
-  } catch (err) {
-    document.getElementById('loading').textContent = 'Error loading posts. Please refresh.';
-    console.error(err);
-  }
-}
+    async function loadPosts() {
+      try {
+        const res = await fetch('/posts.json', { cache: 'no-store' });
+        if (!res.ok) throw new Error('posts.json returned ' + res.status);
+        const data = await res.json();
+        allPosts = data.slice(0, 50);
+        document.getElementById('loading').style.display = 'none';
+        renderPosts();
+      } catch (err) {
+        document.getElementById('loading').textContent = 'Error loading posts. Please refresh.';
+        console.error(err);
+      }
+    }
 
     function renderPosts() {
       const filtered = currentFilter === 'all'
